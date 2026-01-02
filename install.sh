@@ -53,13 +53,6 @@ until curl -fsSL https://packages.sury.org/php/apt.gpg | sudo gpg --dearmor -o /
 done
 echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/sury-php.list
 
-# Redis Repo
-curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg --yes
-echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
-
-# MariaDB Repo (Optimized)
-curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | sudo bash -s -- --skip-setup
-
 # 5. SELECTIVE INSTALLATION (--no-install-recommends for speed)
 apt-get update -y
 apt-get install -yq --no-install-recommends \
