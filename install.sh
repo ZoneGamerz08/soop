@@ -4,22 +4,27 @@
 # PHP 8.3 | MariaDB | Redis | Nginx
 set -e
 
-# Define absolute path for the env file
+# Define paths
 ENV_PATH="$(pwd)/.panel.env"
+TEMP_GUI="/tmp/gui_$(date +%s).py"
 
 # 1. LIGHTWEIGHT Python Setup
 echo "Installing minimal Python requirements..."
 apt-get update -y
-apt-get install -yq --no-install-recommends python3-pip python3-setuptools curl
+apt-get install -yq --no-install-recommends python3-pip python3-setuptools curl ca-certificates gnupg2 lsb-release
 pip install prompt_toolkit --break-system-packages --no-cache-dir
 
-# 2. Run the TUI (Hosted on GitHub)
-echo "Fetching and launching TUI from GitHub..."
-# We pipe the remote gui.py directly to python3
-if curl -fsSL "https://raw.githubusercontent.com/ZoneGamerz08/soop/refs/heads/main/gui.py" | python3 -; then
-    echo "TUI configuration complete."
+# 2. Download, Run (via TTY), and Delete TUI
+echo "Fetching TUI from GitHub..."
+curl -fsSL "https://raw.githubusercontent.com/ZoneGamerz08/soop/refs/heads/main/gui.py" -o "$TEMP_GUI"
+
+if [ -f "$TEMP_GUI" ]; then
+    echo "Launching configuration interface..."
+    # Using < /dev/tty fixes the EOFError by linking the TUI to your keyboard
+    python3 "$TEMP_GUI" < /dev/tty
+    rm "$TEMP_GUI"
 else
-    echo "Error: Failed to fetch or execute the remote TUI (gui.py)."
+    echo "Error: Failed to download the TUI script."
     exit 1
 fi
 
@@ -27,7 +32,7 @@ fi
 if [ -f "$ENV_PATH" ]; then
     source "$ENV_PATH"
 else
-    echo "Error: .panel.env not found. TUI might have failed to save settings."
+    echo "Error: .panel.env not found. TUI might have been closed without saving."
     exit 1
 fi
 
@@ -40,11 +45,10 @@ DB_PASSWORD=$(openssl rand -base64 12)
 export DEBIAN_FRONTEND=noninteractive
 
 # 4. FAST REPO SETUP
-apt-get install -yq --no-install-recommends ca-certificates gnupg2 lsb-release
-
-# PHP Repo with Retry
-echo "Adding PHP Repository..."
+echo "Adding Repositories..."
+# PHP Repo with Retry logic
 until curl -fsSL https://packages.sury.org/php/apt.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg --yes; do
+    echo "Retrying PHP repo download..."
     sleep 2
 done
 echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/sury-php.list
@@ -53,10 +57,10 @@ echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /et
 curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg --yes
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
 
-# MariaDB Repo
+# MariaDB Repo (Optimized)
 curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | sudo bash -s -- --skip-setup
 
-# 5. SELECTIVE INSTALLATION
+# 5. SELECTIVE INSTALLATION (--no-install-recommends for speed)
 apt-get update -y
 apt-get install -yq --no-install-recommends \
     php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
@@ -69,7 +73,7 @@ curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/downl
 tar -xzvf panel.tar.gz
 chmod -R 755 storage/* bootstrap/cache/
 
-# Database Logic
+# Database Logic (Condensed)
 mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel; CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD'; GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1'; FLUSH PRIVILEGES;"
 
 # Configuration
@@ -77,20 +81,21 @@ cp .env.example .env
 COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
 php artisan key:generate --force
 
+# Environment Setup (Silent)
 php artisan p:environment:setup --author="$ADMIN_EMAIL" --url="https://$USER_DOMAIN" --timezone="UTC" --cache="redis" --session="redis" --queue="redis" --redis-host="127.0.0.1" --redis-port="6379" --redis-pass="" --settings-ui=true --telemetry=false
 php artisan p:environment:database --host="127.0.0.1" --port="3306" --database="panel" --username="pterodactyl" --password="$DB_PASSWORD"
 php artisan migrate --seed --force
 
-# Admin Creation
+# Admin Creation (Using corrected flags)
 php artisan p:user:make --email="$ADMIN_EMAIL" --username="$ADMIN_USER" --name-first="Admin" --name-last="User" --password="$ADMIN_PASS" --admin=1
 chown -R www-data:www-data /var/www/pterodactyl/*
-
-# Services & Nginx
-(crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 # 7. Cleanup
 if [ -f "$ENV_PATH" ]; then
     rm "$ENV_PATH"
 fi
 
-echo "Done! Panel is at https://$USER_DOMAIN"
+echo "-------------------------------------------------------"
+echo " Installation Success!"
+echo " URL: https://$USER_DOMAIN"
+echo "-------------------------------------------------------"
