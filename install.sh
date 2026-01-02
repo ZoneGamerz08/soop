@@ -64,7 +64,7 @@ curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | sudo bash -s -- -
 apt-get update -y
 apt-get install -yq --no-install-recommends \
     php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
-    mariadb-server nginx redis-server tar unzip git cron
+    mariadb-server mariadb-client nginx redis-server tar unzip git cron
 
 # 6. PANEL SETUP
 curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
