@@ -43,7 +43,7 @@ if [[ "$OS" == "debian" ]]; then
         
         # Install basics for Debian
         apt update -y
-        apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
+        DEBIAN_FRONTEND=noninteractive apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
 
         # Add PHP Repository (Sury)
         echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/sury-php.list
@@ -62,7 +62,7 @@ elif [[ "$OS" == "ubuntu" ]]; then
     
     # Install basics for Ubuntu
     apt update -y
-    apt -y install software-properties-common curl apt-transport-https ca-certificates gnupg
+    DEBIAN_FRONTEND=noninteractive apt -y install software-properties-common curl apt-transport-https ca-certificates gnupg
 
     # Add PHP Repository (Ondrej)
     LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
@@ -81,7 +81,9 @@ echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://pack
 # -----------------------------
 echo "[*] Updating repositories and installing dependencies..."
 apt update -y
-apt install -y php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} mariadb-server nginx tar unzip git redis-server
+
+# The flag below (DEBIAN_FRONTEND=noninteractive) prevents the MariaDB popup
+DEBIAN_FRONTEND=noninteractive apt install -y php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} mariadb-server nginx tar unzip git redis-server
 
 # Install Composer
 echo "[*] Installing Composer..."
