@@ -1,84 +1,230 @@
-#!/bin/bash
-
-# Pterodactyl Panel Optimized Installer
-# PHP 8.3 | MariaDB | Redis | Nginx
+#!/usr/bin/env bash
 set -e
 
-clear
-echo "-------------------------------------------------------"
-echo " Pterodactyl Panel Setup - Configuration"
-echo "-------------------------------------------------------"
+### -------------------------------
+### CONFIG (EDIT THESE)
+### -------------------------------
+ADMIN_EMAIL="admin@example.com"
+ADMIN_USER="admin"
+ADMIN_PASS="StrongAdminPassword"
+DB_PASSWORD="StrongDBPassword"
+USER_DOMAIN="panel.example.com"
+TIMEZONE="UTC"
 
-# 1. MANUAL INPUT SECTION
-echo "Please enter the following details:"
-
-printf "Panel Domain (e.g., panel.example.com): "
-read USER_DOMAIN
-
-printf "Admin Email: "
-read ADMIN_EMAIL
-
-printf "Admin Username: "
-read ADMIN_USER
-
-printf "Admin Password: "
-read -s ADMIN_PASS
-echo "" # Moves to a new line after hidden password input
-
-# Validation: Check if any of these are empty
-if [[ -z "$USER_DOMAIN" || -z "$ADMIN_EMAIL" || -z "$ADMIN_USER" || -z "$ADMIN_PASS" ]]; then
-    echo "Error: You left one or more fields blank. Please run the script again."
-    exit 1
+### -------------------------------
+### ROOT CHECK
+### -------------------------------
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ Run this script as root"
+  exit 1
 fi
 
-DB_PASSWORD=$(openssl rand -base64 12)
-export DEBIAN_FRONTEND=noninteractive
+### -------------------------------
+### OS DETECTION
+### -------------------------------
+OS_ID=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
+OS_VER=$(lsb_release -rs | cut -d. -f1)
+CODENAME=$(lsb_release -cs)
 
-# 2. SYSTEM REPO SETUP
-echo "Adding Repositories..."
-apt-get update -y
-apt-get install -yq curl ca-certificates gnupg2 lsb-release
+echo "✔ Detected OS: $OS_ID $OS_VER ($CODENAME)"
 
-# PHP Repo Setup
-curl -fsSL https://packages.sury.org/php/apt.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg --yes
-echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/sury-php.list
+### -------------------------------
+### BASE DEPENDENCIES
+### -------------------------------
+apt update
 
-# 3. INSTALLATION
-apt-get update -y
-apt-get install -yq --no-install-recommends \
-    php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
-    mariadb-server mariadb-client nginx redis-server tar unzip git cron
+if [[ "$OS_ID" == "debian" ]]; then
+  echo "✔ Installing Debian dependencies"
+  apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
+elif [[ "$OS_ID" == "ubuntu" ]]; then
+  echo "✔ Installing Ubuntu dependencies"
+  apt install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release
+else
+  echo "❌ Unsupported OS"
+  exit 1
+fi
 
-# 4. PANEL SETUP
-echo "Downloading and preparing Panel..."
-curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
-mkdir -p /var/www/pterodactyl && cd /var/www/pterodactyl
-curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-tar -xzvf panel.tar.gz
-chmod -R 755 storage/* bootstrap/cache/
+### -------------------------------
+### PHP REPOSITORY
+### -------------------------------
+if [[ "$OS_ID" == "ubuntu" ]]; then
+  echo "✔ Adding Ondřej PHP PPA (Ubuntu)"
+  LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
+fi
 
-# Database Logic
-echo "Configuring MariaDB..."
-mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel; CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD'; GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1'; FLUSH PRIVILEGES;"
+if [[ "$OS_ID" == "debian" ]]; then
+  echo "✔ Adding Sury PHP repo (Debian)"
+  curl -fsSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg
+  echo "deb https://packages.sury.org/php/ $CODENAME main" \
+    > /etc/apt/sources.list.d/sury-php.list
+fi
 
-# Configuration
+### -------------------------------
+### REDIS REPO (Debian 11/12 & Ubuntu)
+### -------------------------------
+if [[ "$OS_ID" == "ubuntu" || ( "$OS_ID" == "debian" && "$OS_VER" -ge 11 ) ]]; then
+  echo "✔ Adding Redis repo"
+  curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
+https://packages.redis.io/deb $CODENAME main" \
+    > /etc/apt/sources.list.d/redis.list
+fi
+
+### -------------------------------
+### MARIADB (Debian 11 & 12 ONLY)
+### -------------------------------
+if [[ "$OS_ID" == "debian" && ( "$OS_VER" == "11" || "$OS_VER" == "12" ) ]]; then
+  echo "✔ Adding MariaDB repo"
+  curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
+fi
+
+### -------------------------------
+### INSTALL PACKAGES
+### -------------------------------
+apt update
+
+apt install -y \
+  php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
+  mariadb-server nginx tar unzip git redis-server
+
+### -------------------------------
+### COMPOSER
+### -------------------------------
+curl -sS https://getcomposer.org/installer | php -- \
+  --install-dir=/usr/local/bin --filename=composer
+
+### -------------------------------
+### PTERODACTYL PANEL
+### -------------------------------
+mkdir -p /var/www/pterodactyl
+cd /var/www/pterodactyl
+
+curl -Lo panel.tar.gz \
+https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
+
+tar -xzf panel.tar.gz
+chmod -R 755 storage bootstrap/cache
+
 cp .env.example .env
 COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
 php artisan key:generate --force
 
-# Environment Setup
-echo "Applying environment settings..."
-php artisan p:environment:setup --author="$ADMIN_EMAIL" --url="https://$USER_DOMAIN" --timezone="UTC" --cache="redis" --session="redis" --queue="redis" --redis-host="127.0.0.1" --redis-port="6379" --redis-pass="" --settings-ui=true --telemetry=false
-php artisan p:environment:database --host="127.0.0.1" --port="3306" --database="panel" --username="pterodactyl" --password="$DB_PASSWORD"
+### -------------------------------
+### DATABASE
+### -------------------------------
+mysql <<EOF
+CREATE DATABASE panel;
+CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
+GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
+FLUSH PRIVILEGES;
+EOF
+
+php artisan p:environment:setup \
+  --author="$ADMIN_EMAIL" \
+  --url="https://$USER_DOMAIN" \
+  --timezone="$TIMEZONE" \
+  --cache=redis \
+  --session=redis \
+  --queue=redis \
+  --redis-host=127.0.0.1 \
+  --redis-port=6379 \
+  --settings-ui=true \
+  --telemetry=false
+
+php artisan p:environment:database \
+  --host=127.0.0.1 \
+  --port=3306 \
+  --database=panel \
+  --username=pterodactyl \
+  --password="$DB_PASSWORD"
+
 php artisan migrate --seed --force
 
-# Admin Creation
-echo "Creating Admin Account..."
-php artisan p:user:make --email="$ADMIN_EMAIL" --username="$ADMIN_USER" --name-first="Admin" --name-last="User" --password="$ADMIN_PASS" --admin=1
-chown -R www-data:www-data /var/www/pterodactyl/*
+php artisan p:user:make \
+  --email="$ADMIN_EMAIL" \
+  --username="$ADMIN_USER" \
+  --name-first=Admin \
+  --name-last=User \
+  --password="$ADMIN_PASS" \
+  --admin=1
 
-echo "-------------------------------------------------------"
-echo " Installation Success!"
-echo " URL: https://$USER_DOMAIN"
-echo " Database Password: $DB_PASSWORD"
-echo "-------------------------------------------------------"
+chown -R www-data:www-data /var/www/pterodactyl
+
+### -------------------------------
+### CRON
+### -------------------------------
+(crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
+
+### -------------------------------
+### QUEUE WORKER
+### -------------------------------
+cat > /etc/systemd/system/pteroq.service <<EOF
+[Unit]
+Description=Pterodactyl Queue Worker
+After=redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --queue=high,standard,low --sleep=3 --tries=3
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now redis-server pteroq
+
+### -------------------------------
+### SSL (SELF-SIGNED)
+### -------------------------------
+mkdir -p /etc/certs
+openssl req -x509 -nodes -days 3650 -newkey rsa:4096 \
+  -keyout /etc/certs/privkey.pem \
+  -out /etc/certs/fullchain.pem \
+  -subj "/CN=$USER_DOMAIN"
+
+### -------------------------------
+### NGINX
+### -------------------------------
+rm -f /etc/nginx/sites-enabled/default
+
+cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
+server {
+  listen 80;
+  server_name $USER_DOMAIN;
+  return 301 https://\$host\$request_uri;
+}
+
+server {
+  listen 443 ssl http2;
+  server_name $USER_DOMAIN;
+
+  root /var/www/pterodactyl/public;
+  index index.php;
+
+  ssl_certificate /etc/certs/fullchain.pem;
+  ssl_certificate_key /etc/certs/privkey.pem;
+
+  client_max_body_size 100m;
+
+  location / {
+    try_files \$uri \$uri/ /index.php?\$query_string;
+  }
+
+  location ~ \.php$ {
+    fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+  }
+}
+EOF
+
+ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
+
+systemctl restart nginx
+
+echo "✅ Pterodactyl Panel installed successfully"
+echo "🌐 https://$USER_DOMAIN"
