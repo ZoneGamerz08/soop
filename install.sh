@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
-### -------------------------------
-### CONFIG (EDIT THESE)
-### -------------------------------
+####################################
+# CONFIG – CHANGE THESE
+####################################
 ADMIN_EMAIL="admin@example.com"
 ADMIN_USER="admin"
 ADMIN_PASS="StrongAdminPassword"
@@ -11,107 +11,130 @@ DB_PASSWORD="StrongDBPassword"
 USER_DOMAIN="panel.example.com"
 TIMEZONE="UTC"
 
-### -------------------------------
-### ROOT CHECK
-### -------------------------------
+####################################
+# LOGGING FUNCTIONS
+####################################
+log() {
+  echo -e "\n\033[1;32m[INFO]\033[0m $1"
+}
+
+run() {
+  "$@" >/dev/null 2>&1
+}
+
+####################################
+# ROOT CHECK
+####################################
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Run this script as root"
+  echo "❌ Please run as root"
   exit 1
 fi
 
-### -------------------------------
-### OS DETECTION
-### -------------------------------
+####################################
+# OS DETECTION
+####################################
+log "Detecting operating system"
+
 OS_ID=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
 OS_VER=$(lsb_release -rs | cut -d. -f1)
 CODENAME=$(lsb_release -cs)
 
-echo "✔ Detected OS: $OS_ID $OS_VER ($CODENAME)"
+log "Detected: $OS_ID $OS_VER ($CODENAME)"
 
-### -------------------------------
-### BASE DEPENDENCIES
-### -------------------------------
-apt update
+####################################
+# BASE DEPENDENCIES
+####################################
+log "Installing base dependencies"
+
+export DEBIAN_FRONTEND=noninteractive
+run apt update -qq
 
 if [[ "$OS_ID" == "debian" ]]; then
-  echo "✔ Installing Debian dependencies"
-  apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
+  run apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
 elif [[ "$OS_ID" == "ubuntu" ]]; then
-  echo "✔ Installing Ubuntu dependencies"
-  apt install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release
+  run apt install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release
 else
   echo "❌ Unsupported OS"
   exit 1
 fi
 
-### -------------------------------
-### PHP REPOSITORY
-### -------------------------------
+####################################
+# PHP REPOSITORY
+####################################
 if [[ "$OS_ID" == "ubuntu" ]]; then
-  echo "✔ Adding Ondřej PHP PPA (Ubuntu)"
-  LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
+  log "Adding PHP repository (Ubuntu)"
+  run add-apt-repository -y ppa:ondrej/php
 fi
 
 if [[ "$OS_ID" == "debian" ]]; then
-  echo "✔ Adding Sury PHP repo (Debian)"
-  curl -fsSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg
+  log "Adding PHP repository (Debian)"
+  run curl -fsSL https://packages.sury.org/php/apt.gpg | \
+      gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg
   echo "deb https://packages.sury.org/php/ $CODENAME main" \
     > /etc/apt/sources.list.d/sury-php.list
 fi
 
-### -------------------------------
-### REDIS REPO (Debian 11/12 & Ubuntu)
-### -------------------------------
-if [[ "$OS_ID" == "ubuntu" || ( "$OS_ID" == "debian" && "$OS_VER" -ge 11 ) ]]; then
-  echo "✔ Adding Redis repo"
-  curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-  echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
+####################################
+# REDIS REPOSITORY
+####################################
+log "Adding Redis repository"
+
+run curl -fsSL https://packages.redis.io/gpg | \
+    gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
 https://packages.redis.io/deb $CODENAME main" \
-    > /etc/apt/sources.list.d/redis.list
-fi
+> /etc/apt/sources.list.d/redis.list
 
-### -------------------------------
-### MARIADB (Debian 11 & 12 ONLY)
-### -------------------------------
+####################################
+# MARIADB REPOSITORY (DEBIAN 11 & 12)
+####################################
 if [[ "$OS_ID" == "debian" && ( "$OS_VER" == "11" || "$OS_VER" == "12" ) ]]; then
-  echo "✔ Adding MariaDB repo"
-  curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
+  log "Adding MariaDB repository"
+  run curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
 fi
 
-### -------------------------------
-### INSTALL PACKAGES
-### -------------------------------
-apt update
+####################################
+# INSTALL PACKAGES
+####################################
+log "Installing required packages (this may take a few minutes)"
 
-apt install -y \
+run apt update -qq
+run apt install -y \
   php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
   mariadb-server nginx tar unzip git redis-server
 
-### -------------------------------
-### COMPOSER
-### -------------------------------
-curl -sS https://getcomposer.org/installer | php -- \
-  --install-dir=/usr/local/bin --filename=composer
+####################################
+# COMPOSER
+####################################
+log "Installing Composer"
+run curl -sS https://getcomposer.org/installer | \
+    php -- --install-dir=/usr/local/bin --filename=composer
 
-### -------------------------------
-### PTERODACTYL PANEL
-### -------------------------------
+####################################
+# PTERODACTYL PANEL
+####################################
+log "Installing Pterodactyl Panel"
+
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
 
-curl -Lo panel.tar.gz \
+run curl -Lo panel.tar.gz \
 https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
 
-tar -xzf panel.tar.gz
+run tar -xzf panel.tar.gz
 chmod -R 755 storage bootstrap/cache
 
 cp .env.example .env
-COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
-php artisan key:generate --force
 
-### -------------------------------
-### DATABASE
-### -------------------------------
+COMPOSER_ALLOW_SUPERUSER=1 run composer install --no-dev --optimize-autoloader
+php artisan key:generate --force >/dev/null
+
+####################################
+# DATABASE SETUP
+####################################
+log "Configuring database"
+
 mysql <<EOF
 CREATE DATABASE panel;
 CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
@@ -129,16 +152,16 @@ php artisan p:environment:setup \
   --redis-host=127.0.0.1 \
   --redis-port=6379 \
   --settings-ui=true \
-  --telemetry=false
+  --telemetry=false >/dev/null
 
 php artisan p:environment:database \
   --host=127.0.0.1 \
   --port=3306 \
   --database=panel \
   --username=pterodactyl \
-  --password="$DB_PASSWORD"
+  --password="$DB_PASSWORD" >/dev/null
 
-php artisan migrate --seed --force
+php artisan migrate --seed --force >/dev/null
 
 php artisan p:user:make \
   --email="$ADMIN_EMAIL" \
@@ -146,18 +169,21 @@ php artisan p:user:make \
   --name-first=Admin \
   --name-last=User \
   --password="$ADMIN_PASS" \
-  --admin=1
+  --admin=1 >/dev/null
 
 chown -R www-data:www-data /var/www/pterodactyl
 
-### -------------------------------
-### CRON
-### -------------------------------
+####################################
+# CRON
+####################################
+log "Configuring cron"
 (crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
 
-### -------------------------------
-### QUEUE WORKER
-### -------------------------------
+####################################
+# QUEUE WORKER
+####################################
+log "Configuring queue worker"
+
 cat > /etc/systemd/system/pteroq.service <<EOF
 [Unit]
 Description=Pterodactyl Queue Worker
@@ -174,21 +200,25 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now redis-server pteroq
+run systemctl daemon-reload
+run systemctl enable --now redis-server pteroq
 
-### -------------------------------
-### SSL (SELF-SIGNED)
-### -------------------------------
+####################################
+# SSL CERT
+####################################
+log "Generating self-signed SSL certificate"
+
 mkdir -p /etc/certs
-openssl req -x509 -nodes -days 3650 -newkey rsa:4096 \
+run openssl req -x509 -nodes -days 3650 -newkey rsa:4096 \
   -keyout /etc/certs/privkey.pem \
   -out /etc/certs/fullchain.pem \
   -subj "/CN=$USER_DOMAIN"
 
-### -------------------------------
-### NGINX
-### -------------------------------
+####################################
+# NGINX
+####################################
+log "Configuring NGINX"
+
 rm -f /etc/nginx/sites-enabled/default
 
 cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
@@ -222,9 +252,12 @@ server {
 }
 EOF
 
-ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
+ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
+run systemctl restart nginx
 
-systemctl restart nginx
-
-echo "✅ Pterodactyl Panel installed successfully"
+####################################
+# DONE
+####################################
+echo
+echo "✅ Pterodactyl Panel installation completed successfully!"
 echo "🌐 https://$USER_DOMAIN"
