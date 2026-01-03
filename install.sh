@@ -19,9 +19,19 @@ echo "#      Pterodactyl Panel Installation Script        #"
 echo "#####################################################"
 echo ""
 
-# Gather Input
+# Gather Input with Validation
 read -p "Enter your Domain (e.g., panel.example.com): " USER_DOMAIN
-read -p "Enter Admin Email: " ADMIN_EMAIL
+
+# Loop until a valid email is entered
+while true; do
+    read -p "Enter Admin Email: " ADMIN_EMAIL
+    if [[ "$ADMIN_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        break
+    else
+        echo "Invalid email format. Please try again (e.g., admin@example.com)."
+    fi
+done
+
 read -p "Enter Admin Username: " ADMIN_USER
 read -s -p "Enter Admin Password: " ADMIN_PASS
 echo ""
@@ -41,15 +51,12 @@ if [[ "$OS" == "debian" ]]; then
     if [[ "$VERSION" == "11" || "$VERSION" == "12" || "$VERSION" == "13" ]]; then
         echo "Detected Debian $VERSION. Proceeding..."
         
-        # Install basics for Debian
         apt update -y
         DEBIAN_FRONTEND=noninteractive apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
 
-        # Add PHP Repository (Sury)
         echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/sury-php.list
         curl -fsSL https://packages.sury.org/php/apt.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg
         
-        # MariaDB Repo
         curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | sudo bash
 
     else
@@ -60,11 +67,9 @@ if [[ "$OS" == "debian" ]]; then
 elif [[ "$OS" == "ubuntu" ]]; then
     echo "Detected Ubuntu $VERSION. Proceeding..."
     
-    # Install basics for Ubuntu
     apt update -y
     DEBIAN_FRONTEND=noninteractive apt -y install software-properties-common curl apt-transport-https ca-certificates gnupg
 
-    # Add PHP Repository (Ondrej)
     LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
 
 else
@@ -72,7 +77,6 @@ else
     exit 1
 fi
 
-# Add Redis Official Repo (Common for both)
 curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
 
@@ -81,11 +85,8 @@ echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://pack
 # -----------------------------
 echo "[*] Updating repositories and installing dependencies..."
 apt update -y
-
-# The flag below (DEBIAN_FRONTEND=noninteractive) prevents the MariaDB popup
 DEBIAN_FRONTEND=noninteractive apt install -y php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} mariadb-server nginx tar unzip git redis-server
 
-# Install Composer
 echo "[*] Installing Composer..."
 curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer
 
@@ -104,7 +105,6 @@ chmod -R 755 storage/* bootstrap/cache/
 # 5. DATABASE CONFIGURATION
 # -----------------------------
 echo "[*] Configuring Database..."
-# Create user and database silently
 sudo mysql -u root -e "CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';"
 sudo mysql -u root -e "CREATE DATABASE IF NOT EXISTS panel;"
 sudo mysql -u root -e "GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1' WITH GRANT OPTION;"
@@ -119,6 +119,7 @@ COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
 
 php artisan key:generate --force
 
+# This is the step that failed previously. It will now work with the validated email.
 php artisan p:environment:setup \
     --author="$ADMIN_EMAIL" \
     --url="https://$USER_DOMAIN" \
@@ -151,7 +152,6 @@ php artisan p:user:make \
     --password="$ADMIN_PASS" \
     --admin=1
 
-# Set Permissions
 chown -R www-data:www-data /var/www/pterodactyl/*
 
 # -----------------------------
@@ -159,21 +159,14 @@ chown -R www-data:www-data /var/www/pterodactyl/*
 # -----------------------------
 echo "[*] Setting up Cron and Queue Worker..."
 
-# Add Cronjob via cron.d (cleaner than crontab -e)
 echo "* * * * * www-data php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1" | sudo tee /etc/cron.d/pterodactyl
 
-# Create Systemd Service
 cat <<EOF > /etc/systemd/system/pteroq.service
-# Pterodactyl Queue Worker File
-# ----------------------------------
-
 [Unit]
 Description=Pterodactyl Queue Worker
 After=redis-server.service
 
 [Service]
-# On some systems the user and group might be different.
-# Some systems use \`apache\` or \`nginx\` as the user and group.
 User=www-data
 Group=www-data
 Restart=always
@@ -186,7 +179,6 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
 
-# Enable services
 sudo systemctl enable --now redis-server
 sudo systemctl enable --now pteroq.service
 
@@ -195,10 +187,13 @@ sudo systemctl enable --now pteroq.service
 # -----------------------------
 echo "[*] Generating Self-Signed SSL..."
 mkdir -p /etc/certs
-openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
-    -subj "/C=NA/ST=NA/L=NA/O=NA/CN=Generic SSL Certificate" \
-    -keyout /etc/certs/privkey.pem \
-    -out /etc/certs/fullchain.pem
+# Only generate if it doesn't exist to avoid overwriting if run multiple times
+if [ ! -f /etc/certs/fullchain.pem ]; then
+    openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
+        -subj "/C=NA/ST=NA/L=NA/O=NA/CN=Generic SSL Certificate" \
+        -keyout /etc/certs/privkey.pem \
+        -out /etc/certs/fullchain.pem
+fi
 
 echo "[*] Configuring Nginx..."
 rm -f /etc/nginx/sites-enabled/default
@@ -266,7 +261,6 @@ server {
 }
 EOF
 
-# Enable Nginx Config
 ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/pterodactyl.conf
 sudo systemctl restart nginx
 
@@ -276,5 +270,4 @@ echo "#           INSTALLATION COMPLETE                   #"
 echo "#####################################################"
 echo "Panel URL: https://$USER_DOMAIN"
 echo "User: $ADMIN_EMAIL"
-echo "Note: A self-signed SSL is currently used."
 echo "#####################################################"
