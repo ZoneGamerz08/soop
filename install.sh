@@ -2,7 +2,7 @@
 set -e
 
 ####################################
-# CONFIG – EDIT THESE
+# CONFIG – CHANGE THESE
 ####################################
 ADMIN_EMAIL="admin@example.com"
 ADMIN_USER="admin"
@@ -12,7 +12,7 @@ USER_DOMAIN="panel.example.com"
 TIMEZONE="UTC"
 
 ####################################
-# LOGGING
+# LOGGING (CLEAN OUTPUT)
 ####################################
 log() {
   echo -e "\n\033[1;32m[INFO]\033[0m $1"
@@ -26,7 +26,7 @@ run() {
 # ROOT CHECK
 ####################################
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Run as root"
+  echo "❌ Run this script as root"
   exit 1
 fi
 
@@ -40,14 +40,14 @@ CODENAME=$(lsb_release -cs)
 log "Detected $OS_ID $OS_VER ($CODENAME)"
 
 ####################################
-# BASE PACKAGES
+# BASE DEPENDENCIES
 ####################################
 log "Installing base dependencies"
 export DEBIAN_FRONTEND=noninteractive
 run apt update -qq
 
 if [[ "$OS_ID" == "debian" ]]; then
-  run apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
+  run apt install -y curl ca-certificates gnupg gnupg2 sudo lsb-release apt-transport-https
 elif [[ "$OS_ID" == "ubuntu" ]]; then
   run apt install -y software-properties-common curl ca-certificates gnupg lsb-release apt-transport-https
 else
@@ -56,7 +56,7 @@ else
 fi
 
 ####################################
-# PHP REPO
+# PHP REPOSITORY
 ####################################
 if [[ "$OS_ID" == "ubuntu" ]]; then
   log "Adding PHP repo (Ubuntu)"
@@ -64,26 +64,29 @@ if [[ "$OS_ID" == "ubuntu" ]]; then
 fi
 
 if [[ "$OS_ID" == "debian" ]]; then
-  log "Adding PHP repo (Debian)"
-  run curl -fsSL https://packages.sury.org/php/apt.gpg | \
-      gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg
+  log "Adding PHP repo (Debian – Sury, fixed for Debian 13)"
+
+  run curl -fsSL https://packages.sury.org/php/apt.gpg -o /tmp/sury.gpg
+  gpg --dearmor /tmp/sury.gpg > /etc/apt/trusted.gpg.d/sury-php.gpg
+  rm -f /tmp/sury.gpg
+
   echo "deb https://packages.sury.org/php/ $CODENAME main" \
     > /etc/apt/sources.list.d/sury-php.list
 fi
 
 ####################################
-# REDIS REPO
+# REDIS REPOSITORY
 ####################################
 log "Adding Redis repo"
 run curl -fsSL https://packages.redis.io/gpg | \
-    gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+  gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
 
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
 https://packages.redis.io/deb $CODENAME main" \
 > /etc/apt/sources.list.d/redis.list
 
 ####################################
-# MARIADB REPO (DEBIAN 11 & 12)
+# MARIADB REPOSITORY (DEBIAN 11 & 12)
 ####################################
 if [[ "$OS_ID" == "debian" && ( "$OS_VER" == "11" || "$OS_VER" == "12" ) ]]; then
   log "Adding MariaDB repo"
@@ -135,7 +138,7 @@ FLUSH PRIVILEGES;
 EOF
 
 ####################################
-# ENVIRONMENT (NON-INTERACTIVE FIX)
+# ENVIRONMENT (NON-INTERACTIVE)
 ####################################
 log "Configuring application environment"
 
@@ -181,6 +184,7 @@ log "Setting up cron"
 # QUEUE WORKER
 ####################################
 log "Setting up queue worker"
+
 cat > /etc/systemd/system/pteroq.service <<EOF
 [Unit]
 Description=Pterodactyl Queue Worker
@@ -201,7 +205,7 @@ run systemctl daemon-reload
 run systemctl enable --now redis-server pteroq
 
 ####################################
-# SSL
+# SSL (SELF-SIGNED)
 ####################################
 log "Generating self-signed SSL"
 mkdir -p /etc/certs
