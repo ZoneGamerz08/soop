@@ -2,7 +2,7 @@
 set -e
 
 ####################################
-# CONFIG – CHANGE THESE
+# CONFIG – EDIT THESE
 ####################################
 ADMIN_EMAIL="admin@example.com"
 ADMIN_USER="admin"
@@ -12,7 +12,7 @@ USER_DOMAIN="panel.example.com"
 TIMEZONE="UTC"
 
 ####################################
-# LOGGING FUNCTIONS
+# LOGGING
 ####################################
 log() {
   echo -e "\n\033[1;32m[INFO]\033[0m $1"
@@ -26,48 +26,45 @@ run() {
 # ROOT CHECK
 ####################################
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Please run as root"
+  echo "❌ Run as root"
   exit 1
 fi
 
 ####################################
 # OS DETECTION
 ####################################
-log "Detecting operating system"
-
+log "Detecting OS"
 OS_ID=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
 OS_VER=$(lsb_release -rs | cut -d. -f1)
 CODENAME=$(lsb_release -cs)
-
-log "Detected: $OS_ID $OS_VER ($CODENAME)"
+log "Detected $OS_ID $OS_VER ($CODENAME)"
 
 ####################################
-# BASE DEPENDENCIES
+# BASE PACKAGES
 ####################################
 log "Installing base dependencies"
-
 export DEBIAN_FRONTEND=noninteractive
 run apt update -qq
 
 if [[ "$OS_ID" == "debian" ]]; then
   run apt install -y curl ca-certificates gnupg2 sudo lsb-release apt-transport-https
 elif [[ "$OS_ID" == "ubuntu" ]]; then
-  run apt install -y software-properties-common curl apt-transport-https ca-certificates gnupg lsb-release
+  run apt install -y software-properties-common curl ca-certificates gnupg lsb-release apt-transport-https
 else
   echo "❌ Unsupported OS"
   exit 1
 fi
 
 ####################################
-# PHP REPOSITORY
+# PHP REPO
 ####################################
 if [[ "$OS_ID" == "ubuntu" ]]; then
-  log "Adding PHP repository (Ubuntu)"
+  log "Adding PHP repo (Ubuntu)"
   run add-apt-repository -y ppa:ondrej/php
 fi
 
 if [[ "$OS_ID" == "debian" ]]; then
-  log "Adding PHP repository (Debian)"
+  log "Adding PHP repo (Debian)"
   run curl -fsSL https://packages.sury.org/php/apt.gpg | \
       gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg
   echo "deb https://packages.sury.org/php/ $CODENAME main" \
@@ -75,10 +72,9 @@ if [[ "$OS_ID" == "debian" ]]; then
 fi
 
 ####################################
-# REDIS REPOSITORY
+# REDIS REPO
 ####################################
-log "Adding Redis repository"
-
+log "Adding Redis repo"
 run curl -fsSL https://packages.redis.io/gpg | \
     gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
 
@@ -87,10 +83,10 @@ https://packages.redis.io/deb $CODENAME main" \
 > /etc/apt/sources.list.d/redis.list
 
 ####################################
-# MARIADB REPOSITORY (DEBIAN 11 & 12)
+# MARIADB REPO (DEBIAN 11 & 12)
 ####################################
 if [[ "$OS_ID" == "debian" && ( "$OS_VER" == "11" || "$OS_VER" == "12" ) ]]; then
-  log "Adding MariaDB repository"
+  log "Adding MariaDB repo"
   run curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
 fi
 
@@ -98,7 +94,6 @@ fi
 # INSTALL PACKAGES
 ####################################
 log "Installing required packages (this may take a few minutes)"
-
 run apt update -qq
 run apt install -y \
   php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
@@ -109,38 +104,40 @@ run apt install -y \
 ####################################
 log "Installing Composer"
 run curl -sS https://getcomposer.org/installer | \
-    php -- --install-dir=/usr/local/bin --filename=composer
+  php -- --install-dir=/usr/local/bin --filename=composer
 
 ####################################
 # PTERODACTYL PANEL
 ####################################
 log "Installing Pterodactyl Panel"
-
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
 
 run curl -Lo panel.tar.gz \
 https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
-
 run tar -xzf panel.tar.gz
-chmod -R 755 storage bootstrap/cache
 
+chmod -R 755 storage bootstrap/cache
 cp .env.example .env
 
 COMPOSER_ALLOW_SUPERUSER=1 run composer install --no-dev --optimize-autoloader
 php artisan key:generate --force >/dev/null
 
 ####################################
-# DATABASE SETUP
+# DATABASE
 ####################################
 log "Configuring database"
-
 mysql <<EOF
-CREATE DATABASE panel;
-CREATE USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
+CREATE DATABASE IF NOT EXISTS panel;
+CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
 GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
 FLUSH PRIVILEGES;
 EOF
+
+####################################
+# ENVIRONMENT (NON-INTERACTIVE FIX)
+####################################
+log "Configuring application environment"
 
 php artisan p:environment:setup \
   --author="$ADMIN_EMAIL" \
@@ -151,6 +148,7 @@ php artisan p:environment:setup \
   --queue=redis \
   --redis-host=127.0.0.1 \
   --redis-port=6379 \
+  --redis-pass="" \
   --settings-ui=true \
   --telemetry=false >/dev/null
 
@@ -176,14 +174,13 @@ chown -R www-data:www-data /var/www/pterodactyl
 ####################################
 # CRON
 ####################################
-log "Configuring cron"
+log "Setting up cron"
 (crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
 
 ####################################
 # QUEUE WORKER
 ####################################
-log "Configuring queue worker"
-
+log "Setting up queue worker"
 cat > /etc/systemd/system/pteroq.service <<EOF
 [Unit]
 Description=Pterodactyl Queue Worker
@@ -204,10 +201,9 @@ run systemctl daemon-reload
 run systemctl enable --now redis-server pteroq
 
 ####################################
-# SSL CERT
+# SSL
 ####################################
-log "Generating self-signed SSL certificate"
-
+log "Generating self-signed SSL"
 mkdir -p /etc/certs
 run openssl req -x509 -nodes -days 3650 -newkey rsa:4096 \
   -keyout /etc/certs/privkey.pem \
@@ -218,7 +214,6 @@ run openssl req -x509 -nodes -days 3650 -newkey rsa:4096 \
 # NGINX
 ####################################
 log "Configuring NGINX"
-
 rm -f /etc/nginx/sites-enabled/default
 
 cat > /etc/nginx/sites-available/pterodactyl.conf <<EOF
@@ -259,5 +254,6 @@ run systemctl restart nginx
 # DONE
 ####################################
 echo
-echo "✅ Pterodactyl Panel installation completed successfully!"
-echo "🌐 https://$USER_DOMAIN"
+echo "✅ INSTALLATION COMPLETE"
+echo "🌐 Panel URL: https://$USER_DOMAIN"
+echo "👤 Admin: $ADMIN_USER ($ADMIN_EMAIL)"
