@@ -2,7 +2,7 @@
 set -e
 
 ####################################
-# CONFIG – CHANGE THESE
+# CONFIG – EDIT THESE
 ####################################
 ADMIN_EMAIL="admin@example.com"
 ADMIN_USER="admin"
@@ -12,7 +12,7 @@ USER_DOMAIN="panel.example.com"
 TIMEZONE="UTC"
 
 ####################################
-# LOGGING (CLEAN OUTPUT)
+# LOGGING
 ####################################
 log() {
   echo -e "\n\033[1;32m[INFO]\033[0m $1"
@@ -26,7 +26,7 @@ run() {
 # ROOT CHECK
 ####################################
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Run this script as root"
+  echo "❌ Run as root"
   exit 1
 fi
 
@@ -46,17 +46,11 @@ log "Installing base dependencies"
 export DEBIAN_FRONTEND=noninteractive
 run apt update -qq
 
-if [[ "$OS_ID" == "debian" ]]; then
-  run apt install -y curl ca-certificates gnupg gnupg2 sudo lsb-release apt-transport-https
-elif [[ "$OS_ID" == "ubuntu" ]]; then
-  run apt install -y software-properties-common curl ca-certificates gnupg lsb-release apt-transport-https
-else
-  echo "❌ Unsupported OS"
-  exit 1
-fi
+run apt install -y \
+  curl ca-certificates gnupg gnupg2 sudo lsb-release apt-transport-https
 
 ####################################
-# PHP REPOSITORY
+# PHP REPO
 ####################################
 if [[ "$OS_ID" == "ubuntu" ]]; then
   log "Adding PHP repo (Ubuntu)"
@@ -64,7 +58,7 @@ if [[ "$OS_ID" == "ubuntu" ]]; then
 fi
 
 if [[ "$OS_ID" == "debian" ]]; then
-  log "Adding PHP repo (Debian – Sury, fixed for Debian 13)"
+  log "Adding PHP repo (Debian – Sury, Debian 13 safe)"
 
   run curl -fsSL https://packages.sury.org/php/apt.gpg -o /tmp/sury.gpg
   gpg --dearmor /tmp/sury.gpg > /etc/apt/trusted.gpg.d/sury-php.gpg
@@ -75,18 +69,20 @@ if [[ "$OS_ID" == "debian" ]]; then
 fi
 
 ####################################
-# REDIS REPOSITORY
+# REDIS REPO (FIXED FOR DEBIAN 13)
 ####################################
-log "Adding Redis repo"
-run curl -fsSL https://packages.redis.io/gpg | \
-  gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+log "Adding Redis repo (Debian 13 safe)"
+
+run curl -fsSL https://packages.redis.io/gpg -o /tmp/redis.gpg
+gpg --dearmor /tmp/redis.gpg > /usr/share/keyrings/redis-archive-keyring.gpg
+rm -f /tmp/redis.gpg
 
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
 https://packages.redis.io/deb $CODENAME main" \
 > /etc/apt/sources.list.d/redis.list
 
 ####################################
-# MARIADB REPOSITORY (DEBIAN 11 & 12)
+# MARIADB REPO (DEBIAN 11 & 12 ONLY)
 ####################################
 if [[ "$OS_ID" == "debian" && ( "$OS_VER" == "11" || "$OS_VER" == "12" ) ]]; then
   log "Adding MariaDB repo"
@@ -205,7 +201,7 @@ run systemctl daemon-reload
 run systemctl enable --now redis-server pteroq
 
 ####################################
-# SSL (SELF-SIGNED)
+# SSL
 ####################################
 log "Generating self-signed SSL"
 mkdir -p /etc/certs
@@ -260,4 +256,3 @@ run systemctl restart nginx
 echo
 echo "✅ INSTALLATION COMPLETE"
 echo "🌐 Panel URL: https://$USER_DOMAIN"
-echo "👤 Admin: $ADMIN_USER ($ADMIN_EMAIL)"
