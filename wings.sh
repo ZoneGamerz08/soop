@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+# ------------------------
+# Root Check
+# ------------------------
+if [ "$EUID" -ne 0 ]; then
+    echo "[ERROR] This script must be run as root"
+    exit 1
+fi
+
 print_status() {
     echo -e "\n[INFO] $1"
 }
@@ -21,7 +29,7 @@ print_status "Installing Docker"
 curl -sSL https://get.docker.com/ | CHANNEL=stable bash
 check_success "Docker installed" "Docker installation failed"
 
-sudo systemctl enable --now docker
+systemctl enable --now docker
 check_success "Docker service enabled" "Failed to enable Docker"
 
 # ------------------------
@@ -30,8 +38,8 @@ check_success "Docker service enabled" "Failed to enable Docker"
 GRUB_FILE="/etc/default/grub"
 if [ -f "$GRUB_FILE" ] && ! grep -q "swapaccount=1" "$GRUB_FILE"; then
     print_status "Enabling Docker swap accounting"
-    sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/&swapaccount=1 /' $GRUB_FILE
-    sudo update-grub > /dev/null 2>&1
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/&swapaccount=1 /' $GRUB_FILE
+    update-grub > /dev/null 2>&1
     check_success "GRUB updated (Reboot required)" "Failed to update GRUB"
 fi
 
@@ -40,7 +48,7 @@ fi
 # ------------------------
 print_status "Installing Pterodactyl Wings"
 
-sudo mkdir -p /etc/pterodactyl
+mkdir -p /etc/pterodactyl
 
 ARCH="$(uname -m)"
 if [[ "$ARCH" == "x86_64" ]]; then
@@ -53,14 +61,14 @@ curl -L -o /usr/local/bin/wings \
 "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_${BIN_ARCH}"
 check_success "Wings downloaded" "Failed to download Wings"
 
-sudo chmod +x /usr/local/bin/wings
+chmod +x /usr/local/bin/wings
 
 # ------------------------
 # 4. Create systemd Service
 # ------------------------
 print_status "Creating wings.service"
 
-cat <<SERVICE | sudo tee /etc/systemd/system/wings.service > /dev/null
+cat <<SERVICE > /etc/systemd/system/wings.service
 [Unit]
 Description=Pterodactyl Wings Daemon
 After=docker.service
@@ -82,8 +90,8 @@ RestartSec=5s
 WantedBy=multi-user.target
 SERVICE
 
-sudo systemctl daemon-reload
-sudo systemctl enable wings
+systemctl daemon-reload
+systemctl enable wings
 check_success "Wings service registered" "Failed to enable Wings"
 
 # ------------------------
@@ -91,7 +99,7 @@ check_success "Wings service registered" "Failed to enable Wings"
 # ------------------------
 print_status "Generating SSL certificates"
 
-sudo mkdir -p /etc/certs/wings
+mkdir -p /etc/certs/wings
 cd /etc/certs/wings
 
 openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
@@ -114,7 +122,7 @@ read -p "Enter Remote URL (Panel URL): " REMOTE
 # ------------------------
 print_status "Creating Wings configuration"
 
-cat <<CFG | sudo tee /etc/pterodactyl/config.yml > /dev/null
+cat <<CFG > /etc/pterodactyl/config.yml
 debug: false
 uuid: ${UUID}
 token_id: ${TOKEN_ID}
@@ -141,7 +149,7 @@ check_success "Wings config created" "Failed to write config"
 # 8. Start Wings
 # ------------------------
 print_status "Starting Wings"
-sudo systemctl start wings
+systemctl start wings
 check_success "Wings started successfully" "Wings failed to start"
 
 echo
