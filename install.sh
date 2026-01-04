@@ -26,7 +26,7 @@ get_credentials() {
     read -rsp "Enter Admin Password: " ADMIN_PASS </dev/tty
     echo
 
-    # Auto-generate database password (no prompt)
+    # Auto-generate database password
     DB_PASSWORD="$(openssl rand -base64 32)"
 
     export USER_DOMAIN ADMIN_EMAIL ADMIN_USER ADMIN_PASS DB_PASSWORD
@@ -49,7 +49,7 @@ echo "[INFO] Detected $OS $VERSION"
 
 apt update -y
 DEBIAN_FRONTEND=noninteractive apt install -y \
-  curl ca-certificates gnupg lsb-release apt-transport-https sudo
+  curl ca-certificates gnupg lsb-release apt-transport-https sudo openssl
 
 # PHP (Sury)
 echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
@@ -93,7 +93,7 @@ chmod -R 755 storage bootstrap/cache
 # ---------------------------------------------------------
 # 5. DATABASE SETUP
 # ---------------------------------------------------------
-mysql -u root <<EOF
+mariadb <<EOF
 CREATE DATABASE IF NOT EXISTS panel;
 CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
 GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
@@ -101,14 +101,15 @@ FLUSH PRIVILEGES;
 EOF
 
 # ---------------------------------------------------------
-# 6. PANEL CONFIG
+# 6. PANEL CONFIG (NON-INTERACTIVE)
 # ---------------------------------------------------------
 cp .env.example .env
 
-COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
+COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader --no-interaction
 php artisan key:generate --force
 
 php artisan p:environment:setup \
+  --force \
   --author="$ADMIN_EMAIL" \
   --url="https://$USER_DOMAIN" \
   --timezone=UTC \
@@ -122,6 +123,7 @@ php artisan p:environment:setup \
   --telemetry=false
 
 php artisan p:environment:database \
+  --force \
   --host=127.0.0.1 \
   --port=3306 \
   --database=panel \
