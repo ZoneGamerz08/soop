@@ -6,50 +6,16 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Formatting
-BLUE='\e[34m'
-GREEN='\e[32m'
-RED='\e[31m'
-NC='\e[0m'
+# Helper functions for status reporting
+print_status() { echo -e "\e[34m[INFO]\e[0m $1"; }
+check_success() { if [ $? -eq 0 ]; then echo -e "\e[32m[SUCCESS]\e[0m $1"; else echo -e "\e[31m[ERROR]\e[0m $2"; exit 1; fi }
 
-print_status() { echo -e "${BLUE}[INFO]${NC} $1"; }
-check_success() { if [ $? -eq 0 ]; then echo -e "${GREEN}[SUCCESS]${NC} $1"; else echo -e "${RED}[ERROR]${NC} $2"; exit 1; fi }
-
-# Progress Bar Function for smaller tasks
-run_with_bar() {
-    local message=$1
-    local command=$2
-    echo -ne "${BLUE}[INFO]${NC} $message... [                          ] (0%) \r"
-    eval "$command" > /dev/null 2>&1 &
-    local pid=$!
-    local count=0
-    while kill -0 $pid 2>/dev/null; do
-        count=$(( (count + 1) % 26 ))
-        local bar=""
-        for ((i=0; i<count; i++)); do bar+="#"; done
-        for ((i=count; i<25; i++)); do bar+=" "; done
-        echo -ne "${BLUE}[INFO]${NC} $message... [${bar}] ($((count * 4))%) \r"
-        sleep 0.2
-    done
-    wait $pid
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}[SUCCESS]${NC} $message... [#########################] (100%)"
-    else
-        echo -e "${RED}[ERROR]${NC} $message failed."
-        exit 1
-    fi
-}
-
-# --- START INSTALLATION ---
-
-# 1. Install Docker (LOGS ENABLED)
-print_status "Starting Docker installation (Detailed logs below)..."
-echo "-------------------------------------------------------"
-# Running without /dev/null so you see the live progress
-curl -sSL https://get.docker.com/ | CHANNEL=stable bash
-echo "-------------------------------------------------------"
+# 1. Install Docker
+print_status "Installing Docker..."
+# Redirecting all output to /dev/null to keep it clean
+curl -sSL https://get.docker.com/ | CHANNEL=stable bash >
 systemctl enable --now docker > /dev/null 2>&1
-check_success "Docker Engine active" "Docker failed to start"
+check_success "Docker installed and started" "Docker installation failed"
 
 # 2. Update GRUB (Swap Support)
 GRUB_FILE="/etc/default/grub"
@@ -57,11 +23,16 @@ if [ -f "$GRUB_FILE" ] && ! grep -q "swapaccount=1" "$GRUB_FILE"; then
     print_status "Enabling Docker swap accounting in GRUB..."
     sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/&swapaccount=1 /' $GRUB_FILE
     update-grub > /dev/null 2>&1
-    print_status "GRUB updated. A reboot will be required later."
+    print_status "GRUB updated. NOTE: A reboot is required for swap limits to take effect."
 fi
 
-# 3. Download Wings (PROGRESS BAR)
-run_with_bar "Downloading Wings binary" "mkdir -p /etc/pterodactyl && ARCH=\$([[ \"\$(uname -m)\" == \"x86_64\" ]] && echo \"amd64\" || echo \"arm64\") && curl -L -s -o /usr/local/bin/wings \"https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_\$ARCH\" && chmod u+x /usr/local/bin/wings"
+# 3. Download Wings Binary
+print_status "Downloading Wings binary..."
+mkdir -p /etc/pterodactyl
+ARCH=$([[ "$(uname -m)" == "x86_64" ]] && echo "amd64" || echo "arm64")
+curl -L -s -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_$ARCH"
+chmod u+x /usr/local/bin/wings
+check_success "Wings binary downloaded" "Failed to download Wings"
 
 # 4. Create Systemd Service
 print_status "Creating Wings systemd service..."
@@ -86,23 +57,32 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
+
 systemctl daemon-reload > /dev/null 2>&1
 systemctl enable wings > /dev/null 2>&1
+check_success "Systemd service configured" "Failed to reload daemon"
 
-# 5. Generate SSL (PROGRESS BAR)
-run_with_bar "Generating SSL certificates" "mkdir -p /etc/certs/wings && openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 -subj '/C=NA/ST=NA/L=NA/O=NA/CN=Generic SSL Certificate' -keyout /etc/certs/wings/privkey.pem -out /etc/certs/wings/fullchain.pem"
+# 5. Generate SSL Certificates
+print_status "Generating self-signed SSL certificates..."
+mkdir -p /etc/certs/wings
+openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
+    -subj "/C=NA/ST=NA/L=NA/O=NA/CN=Generic SSL Certificate" \
+    -keyout /etc/certs/wings/privkey.pem \
+    -out /etc/certs/wings/fullchain.pem > /dev/null 2>&1
+check_success "SSL certificates generated" "SSL generation failed"
 
-# 6. Configuration (INTERACTIVE)
+# 6. Get User Configuration
+# We use < /dev/tty so the script can read your typing while being piped from curl
 echo "-------------------------------------------------------"
-echo "Configure Wings with details from your Panel:"
+echo "Please enter the configuration details from your Panel:"
 read -p "Node UUID: " UUID < /dev/tty
 read -p "Token ID: " TOKEN_ID < /dev/tty
 read -p "Token: " TOKEN < /dev/tty
-read -p "Remote URL: " REMOTE < /dev/tty
+read -p "Remote URL (e.g., https://panel.example.com): " REMOTE < /dev/tty
 echo "-------------------------------------------------------"
 
-# 7. Finalize
-print_status "Writing configuration and starting service..."
+# 7. Write Config File
+print_status "Writing wings configuration..."
 cat <<CFG > /etc/pterodactyl/config.yml
 debug: false
 uuid: ${UUID}
@@ -124,5 +104,7 @@ allowed_mounts: []
 remote: '${REMOTE}'
 CFG
 
+# 8. Start Wings
+print_status "Starting Wings..."
 systemctl start wings > /dev/null 2>&1
-check_success "Wings is now flying!" "Wings failed to start. Run 'journalctl -u wings' for info."
+check_success "Wings is now running!" "Wings failed to start."
