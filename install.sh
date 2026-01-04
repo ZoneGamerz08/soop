@@ -2,16 +2,16 @@
 
 # Abort on any error
 set -e
-
 # ---------------------------------------------------------
-# 1. INTERACTIVE CREDENTIALS
+# 1. INTERACTIVE CREDENTIALS (FIXED FOR curl | bash)
 # ---------------------------------------------------------
 echo "Pterodactyl Panel Installation Setup"
 echo "======================================"
-read -rp "Enter Panel Domain (e.g. panel.example.com): " USER_DOMAIN
-read -rp "Enter Admin Email: " ADMIN_EMAIL
-read -rp "Enter Admin Username: " ADMIN_USER
-read -rsp "Enter Admin Password: " ADMIN_PASS
+
+read -rp "Enter Panel Domain (e.g. panel.example.com): " USER_DOMAIN </dev/tty
+read -rp "Enter Admin Email: " ADMIN_EMAIL </dev/tty
+read -rp "Enter Admin Username: " ADMIN_USER </dev/tty
+read -rsp "Enter Admin Password: " ADMIN_PASS </dev/tty
 echo
 
 # Auto-generate secure DB password (32 chars)
