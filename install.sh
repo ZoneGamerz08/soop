@@ -1,9 +1,8 @@
 #!/bin/bash
-
-# Abort on any error
 set -e
+
 # ---------------------------------------------------------
-# 1. INTERACTIVE CREDENTIALS (FIXED FOR curl | bash)
+# 1. INTERACTIVE CREDENTIALS (curl | bash SAFE)
 # ---------------------------------------------------------
 echo "Pterodactyl Panel Installation Setup"
 echo "======================================"
@@ -14,46 +13,41 @@ read -rp "Enter Admin Username: " ADMIN_USER </dev/tty
 read -rsp "Enter Admin Password: " ADMIN_PASS </dev/tty
 echo
 
-# Auto-generate secure DB password (32 chars)
+# Auto-generate secure DB password
 DB_PASSWORD="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)"
 
 echo
 echo "✅ Credentials saved. Starting installation..."
 echo
 
-# Check if running as root
+# ---------------------------------------------------------
+# ROOT CHECK
+# ---------------------------------------------------------
 if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root"
+  echo "❌ Please run as root"
   exit 1
 fi
 
-# -----------------------------
+# ---------------------------------------------------------
 # 2. OS DETECTION & REPOS
-# -----------------------------
+# ---------------------------------------------------------
 source /etc/os-release
 OS=$ID
 VERSION=$VERSION_ID
 
 if [[ "$OS" == "debian" ]]; then
-    if [[ "$VERSION" == "11" || "$VERSION" == "12" || "$VERSION" == "13" ]]; then
-        apt update -y
-        DEBIAN_FRONTEND=noninteractive apt install -y \
-            curl ca-certificates gnupg sudo lsb-release apt-transport-https
-
-        # PHP (Sury)
-        curl -fsSL https://packages.sury.org/php/apt.gpg \
-            | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
-        echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
-            > /etc/apt/sources.list.d/sury-php.list
-
-        # MariaDB
-        curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
-    fi
-elif [[ "$OS" == "ubuntu" ]]; then
     apt update -y
     DEBIAN_FRONTEND=noninteractive apt install -y \
-        software-properties-common curl ca-certificates gnupg apt-transport-https
-    add-apt-repository -y ppa:ondrej/php
+        curl ca-certificates gnupg sudo lsb-release apt-transport-https
+
+    # PHP (Sury)
+    curl -fsSL https://packages.sury.org/php/apt.gpg \
+        | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
+    echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
+        > /etc/apt/sources.list.d/sury-php.list
+
+    # MariaDB
+    curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
 fi
 
 # Redis
@@ -63,9 +57,9 @@ echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
 https://packages.redis.io/deb $(lsb_release -cs) main" \
     > /etc/apt/sources.list.d/redis.list
 
-# -----------------------------
+# ---------------------------------------------------------
 # 3. INSTALL DEPENDENCIES
-# -----------------------------
+# ---------------------------------------------------------
 apt update -y
 DEBIAN_FRONTEND=noninteractive apt install -y \
     php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
@@ -74,9 +68,9 @@ DEBIAN_FRONTEND=noninteractive apt install -y \
 curl -sS https://getcomposer.org/installer \
     | php -- --install-dir=/usr/local/bin --filename=composer
 
-# -----------------------------
+# ---------------------------------------------------------
 # 4. DOWNLOAD & INSTALL PANEL
-# -----------------------------
+# ---------------------------------------------------------
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
 
@@ -85,20 +79,23 @@ curl -Lo panel.tar.gz \
 tar -xzf panel.tar.gz
 chmod -R 755 storage/* bootstrap/cache/
 
-# -----------------------------
-# 5. DATABASE CONFIGURATION
-# -----------------------------
+# ---------------------------------------------------------
+# 5. DATABASE CONFIGURATION (FIXED)
+# ---------------------------------------------------------
 mysql -u root <<EOF
 CREATE DATABASE IF NOT EXISTS panel;
+
 CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1'
 IDENTIFIED BY '${DB_PASSWORD}';
+
 GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
+
 FLUSH PRIVILEGES;
 EOF
 
-# -----------------------------
+# ---------------------------------------------------------
 # 6. PANEL CONFIGURATION
-# -----------------------------
+# ---------------------------------------------------------
 cp .env.example .env
 
 COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
@@ -136,9 +133,9 @@ php artisan p:user:make \
 
 chown -R www-data:www-data /var/www/pterodactyl
 
-# -----------------------------
+# ---------------------------------------------------------
 # 7. CRON & QUEUE WORKER
-# -----------------------------
+# ---------------------------------------------------------
 echo "* * * * * www-data php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1" \
     > /etc/cron.d/pterodactyl
 
@@ -160,9 +157,9 @@ EOF
 
 systemctl enable --now redis-server pteroq.service
 
-# -----------------------------
+# ---------------------------------------------------------
 # 8. SSL & NGINX
-# -----------------------------
+# ---------------------------------------------------------
 mkdir -p /etc/certs
 
 if [ ! -f /etc/certs/fullchain.pem ]; then
@@ -210,6 +207,6 @@ ln -sf /etc/nginx/sites-available/pterodactyl.conf \
 systemctl restart nginx
 
 echo
-echo "✅ Installation Complete!"
-echo "Panel URL: https://${USER_DOMAIN}"
-echo "Database password (saved internally): ${DB_PASSWORD}"
+echo "✅ INSTALLATION COMPLETE"
+echo "🌐 Panel URL: https://${USER_DOMAIN}"
+echo "🔐 DB Password (save this): ${DB_PASSWORD}"
