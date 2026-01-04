@@ -13,7 +13,7 @@ check_success() { if [ $? -eq 0 ]; then echo -e "\e[32m[SUCCESS]\e[0m $1"; else 
 # 1. Install Docker
 print_status "Installing Docker..."
 # Redirecting all output to /dev/null to keep it clean
-curl -sSL https://get.docker.com/ | CHANNEL=stable bash >
+curl -sSL https://get.docker.com/ | CHANNEL=stable bash 
 systemctl enable --now docker > /dev/null 2>&1
 check_success "Docker installed and started" "Docker installation failed"
 
