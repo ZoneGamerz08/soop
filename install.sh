@@ -1,18 +1,18 @@
 #!/bin/bash
 
-# Abort on any error
+# Abort on error
 set -e
 
 # ---------------------------------------------------------
 # ROOT CHECK
 # ---------------------------------------------------------
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Please run this script as root"
+  echo "❌ Please run as root"
   exit 1
 fi
 
 # ---------------------------------------------------------
-# 1. GET CREDENTIALS FROM USER
+# 1. GET CREDENTIALS FROM USER (PIPE SAFE)
 # ---------------------------------------------------------
 get_credentials() {
     echo "======================================"
@@ -20,16 +20,17 @@ get_credentials() {
     echo "======================================"
     echo
 
-    read -rp "Enter Panel Domain (e.g. panel.example.com): " USER_DOMAIN
-    read -rp "Enter Admin Email: " ADMIN_EMAIL
-    read -rp "Enter Admin Username: " ADMIN_USER
+    read -rp "Enter Panel Domain (e.g. panel.example.com): " USER_DOMAIN </dev/tty
+    read -rp "Enter Admin Email: " ADMIN_EMAIL </dev/tty
+    read -rp "Enter Admin Username: " ADMIN_USER </dev/tty
 
     while true; do
-        read -rsp "Enter Admin Password: " ADMIN_PASS
+        read -rsp "Enter Admin Password: " ADMIN_PASS </dev/tty
         echo
-        read -rsp "Confirm Admin Password: " ADMIN_PASS_CONFIRM
+        read -rsp "Confirm Admin Password: " ADMIN_PASS_CONFIRM </dev/tty
         echo
-        if [[ "$ADMIN_PASS" == "$ADMIN_PASS_CONFIRM" && -n "$ADMIN_PASS" ]]; then
+
+        if [[ -n "$ADMIN_PASS" && "$ADMIN_PASS" == "$ADMIN_PASS_CONFIRM" ]]; then
             break
         else
             echo "❌ Passwords do not match or are empty. Try again."
@@ -37,11 +38,12 @@ get_credentials() {
     done
 
     while true; do
-        read -rsp "Enter Database Password: " DB_PASSWORD
+        read -rsp "Enter Database Password: " DB_PASSWORD </dev/tty
         echo
-        read -rsp "Confirm Database Password: " DB_PASSWORD_CONFIRM
+        read -rsp "Confirm Database Password: " DB_PASSWORD_CONFIRM </dev/tty
         echo
-        if [[ "$DB_PASSWORD" == "$DB_PASSWORD_CONFIRM" && -n "$DB_PASSWORD" ]]; then
+
+        if [[ -n "$DB_PASSWORD" && "$DB_PASSWORD" == "$DB_PASSWORD_CONFIRM" ]]; then
             break
         else
             echo "❌ Database passwords do not match or are empty. Try again."
@@ -58,47 +60,47 @@ get_credentials() {
 get_credentials
 
 # ---------------------------------------------------------
-# 2. OS DETECTION & REPOSITORIES
+# 2. OS DETECTION & REPOS
 # ---------------------------------------------------------
 source /etc/os-release
 OS=$ID
 VERSION=$VERSION_ID
 
-echo "[INFO] Detected OS: $OS $VERSION"
+echo "[INFO] Detected $OS $VERSION"
 
-if [[ "$OS" == "debian" ]]; then
-    apt update -y
-    DEBIAN_FRONTEND=noninteractive apt install -y \
-        curl ca-certificates gnupg sudo lsb-release apt-transport-https
+apt update -y
+DEBIAN_FRONTEND=noninteractive apt install -y \
+  curl ca-certificates gnupg lsb-release apt-transport-https sudo
 
-    echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
-        > /etc/apt/sources.list.d/sury-php.list
-    curl -fsSL https://packages.sury.org/php/apt.gpg \
-        | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
+# PHP (Sury)
+echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
+  > /etc/apt/sources.list.d/sury-php.list
+curl -fsSL https://packages.sury.org/php/apt.gpg \
+  | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
 
-    curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
-fi
+# MariaDB
+curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
 
-# Redis Repo
+# Redis
 curl -fsSL https://packages.redis.io/gpg \
-    | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+  | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
 https://packages.redis.io/deb $(lsb_release -cs) main" \
-    > /etc/apt/sources.list.d/redis.list
+  > /etc/apt/sources.list.d/redis.list
 
 # ---------------------------------------------------------
 # 3. INSTALL DEPENDENCIES
 # ---------------------------------------------------------
 apt update -y
 DEBIAN_FRONTEND=noninteractive apt install -y \
-    php8.3 php8.3-{cli,common,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
-    mariadb-server nginx redis-server tar unzip git
+  php8.3 php8.3-{cli,common,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
+  mariadb-server nginx redis-server git tar unzip
 
 curl -sS https://getcomposer.org/installer \
-    | php -- --install-dir=/usr/local/bin --filename=composer
+  | php -- --install-dir=/usr/local/bin --filename=composer
 
 # ---------------------------------------------------------
-# 4. DOWNLOAD & INSTALL PANEL
+# 4. DOWNLOAD PANEL
 # ---------------------------------------------------------
 mkdir -p /var/www/pterodactyl
 cd /var/www/pterodactyl
@@ -110,7 +112,7 @@ tar -xzf panel.tar.gz
 chmod -R 755 storage bootstrap/cache
 
 # ---------------------------------------------------------
-# 5. DATABASE CONFIGURATION
+# 5. DATABASE SETUP
 # ---------------------------------------------------------
 mysql -u root <<EOF
 CREATE DATABASE IF NOT EXISTS panel;
@@ -120,7 +122,7 @@ FLUSH PRIVILEGES;
 EOF
 
 # ---------------------------------------------------------
-# 6. PANEL CONFIGURATION
+# 6. PANEL CONFIG
 # ---------------------------------------------------------
 cp .env.example .env
 
@@ -130,7 +132,7 @@ php artisan key:generate --force
 php artisan p:environment:setup \
   --author="$ADMIN_EMAIL" \
   --url="https://$USER_DOMAIN" \
-  --timezone="UTC" \
+  --timezone=UTC \
   --cache=redis \
   --session=redis \
   --queue=redis \
@@ -160,7 +162,7 @@ php artisan p:user:make \
 chown -R www-data:www-data /var/www/pterodactyl
 
 # ---------------------------------------------------------
-# 7. CRON & QUEUE WORKER
+# 7. CRON & QUEUE
 # ---------------------------------------------------------
 echo "* * * * * www-data php /var/www/pterodactyl/artisan schedule:run \
 >> /dev/null 2>&1" > /etc/cron.d/pterodactyl
@@ -186,16 +188,14 @@ systemctl daemon-reload
 systemctl enable --now redis-server pteroq.service
 
 # ---------------------------------------------------------
-# 8. SSL & NGINX
+# 8. NGINX + SSL (SELF-SIGNED)
 # ---------------------------------------------------------
 mkdir -p /etc/certs
 
-if [ ! -f /etc/certs/fullchain.pem ]; then
 openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
-  -subj "/C=NA/ST=NA/L=NA/O=NA/CN=$USER_DOMAIN" \
+  -subj "/CN=$USER_DOMAIN" \
   -keyout /etc/certs/privkey.pem \
   -out /etc/certs/fullchain.pem
-fi
 
 rm -f /etc/nginx/sites-enabled/default
 
@@ -237,7 +237,7 @@ systemctl restart nginx php8.3-fpm
 # DONE
 # ---------------------------------------------------------
 echo
-echo "✅ INSTALLATION COMPLETE!"
-echo "🌐 Panel URL: https://$USER_DOMAIN"
-echo "👤 Admin User: $ADMIN_USER"
+echo "✅ INSTALLATION COMPLETE"
+echo "🌐 https://$USER_DOMAIN"
+echo "👤 Admin: $ADMIN_USER"
 echo
