@@ -11,9 +11,6 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-export DEBIAN_FRONTEND=noninteractive
-APT_FLAGS="-y -qq --no-install-recommends"
-
 # ---------------------------------------------------------
 # 1. GET CREDENTIALS FROM USER (PIPE SAFE)
 # ---------------------------------------------------------
@@ -26,83 +23,58 @@ get_credentials() {
     read -rp "Enter Panel Domain (e.g. panel.example.com): " USER_DOMAIN </dev/tty
     read -rp "Enter Admin Email: " ADMIN_EMAIL </dev/tty
     read -rp "Enter Admin Username: " ADMIN_USER </dev/tty
+    read -rsp "Enter Admin Password: " ADMIN_PASS </dev/tty
+    echo
 
-    while true; do
-        read -rsp "Enter Admin Password: " ADMIN_PASS </dev/tty
-        echo
-        read -rsp "Confirm Admin Password: " ADMIN_PASS_CONFIRM </dev/tty
-        echo
-
-        [[ -n "$ADMIN_PASS" && "$ADMIN_PASS" == "$ADMIN_PASS_CONFIRM" ]] && break
-        echo "❌ Passwords do not match or are empty."
-    done
-
-    while true; do
-        read -rsp "Enter Database Password: " DB_PASSWORD </dev/tty
-        echo
-        read -rsp "Confirm Database Password: " DB_PASSWORD_CONFIRM </dev/tty
-        echo
-
-        [[ -n "$DB_PASSWORD" && "$DB_PASSWORD" == "$DB_PASSWORD_CONFIRM" ]] && break
-        echo "❌ Database passwords do not match or are empty."
-    done
+    # Auto-generate database password (no prompt)
+    DB_PASSWORD="$(openssl rand -base64 32)"
 
     export USER_DOMAIN ADMIN_EMAIL ADMIN_USER ADMIN_PASS DB_PASSWORD
 
     echo
     echo "✅ Credentials saved. Starting installation..."
+    echo
 }
 
 get_credentials
 
 # ---------------------------------------------------------
-# 2. OS DETECTION & REPOS (OPTIMIZED)
+# 2. OS DETECTION & REPOS
 # ---------------------------------------------------------
 source /etc/os-release
 OS=$ID
 VERSION=$VERSION_ID
-CODENAME=$VERSION_CODENAME
 
-echo "[INFO] Detected $OS $VERSION ($CODENAME)"
+echo "[INFO] Detected $OS $VERSION"
 
-apt update -qq
-apt install $APT_FLAGS \
-  curl ca-certificates gnupg sudo lsb-release apt-transport-https
+apt update -y
+DEBIAN_FRONTEND=noninteractive apt install -y \
+  curl ca-certificates gnupg lsb-release apt-transport-https sudo
 
-# Repo files first (no network)
-echo "deb https://packages.sury.org/php/ $CODENAME main" \
+# PHP (Sury)
+echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
   > /etc/apt/sources.list.d/sury-php.list
+curl -fsSL https://packages.sury.org/php/apt.gpg \
+  | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
 
+# MariaDB
+curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
+
+# Redis
+curl -fsSL https://packages.redis.io/gpg \
+  | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
-https://packages.redis.io/deb $CODENAME main" \
+https://packages.redis.io/deb $(lsb_release -cs) main" \
   > /etc/apt/sources.list.d/redis.list
-
-# Parallel repo key setup
-(
-  curl -fsSL https://packages.sury.org/php/apt.gpg \
-    | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
-) &
-
-(
-  curl -fsSL https://packages.redis.io/gpg \
-    | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-) &
-
-(
-  curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
-) &
-
-wait
 
 # ---------------------------------------------------------
 # 3. INSTALL DEPENDENCIES
 # ---------------------------------------------------------
-apt update -qq
-apt install $APT_FLAGS \
+apt update -y
+DEBIAN_FRONTEND=noninteractive apt install -y \
   php8.3 php8.3-{cli,common,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
   mariadb-server nginx redis-server git tar unzip
 
-# Composer (quiet + faster)
 curl -sS https://getcomposer.org/installer \
   | php -- --install-dir=/usr/local/bin --filename=composer
 
@@ -116,16 +88,12 @@ curl -Lo panel.tar.gz \
 https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
 
 tar -xzf panel.tar.gz
-
-# Faster permission handling
-find storage bootstrap/cache -type d -exec chmod 755 {} +
-find storage bootstrap/cache -type f -exec chmod 644 {} +
+chmod -R 755 storage bootstrap/cache
 
 # ---------------------------------------------------------
-# 5. DATABASE SETUP (FASTER)
+# 5. DATABASE SETUP
 # ---------------------------------------------------------
 mysql -u root <<EOF
-SET sql_log_bin = 0;
 CREATE DATABASE IF NOT EXISTS panel;
 CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '$DB_PASSWORD';
 GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1';
@@ -137,15 +105,7 @@ EOF
 # ---------------------------------------------------------
 cp .env.example .env
 
-COMPOSER_ALLOW_SUPERUSER=1 \
-COMPOSER_PROCESS_TIMEOUT=0 \
-composer install \
-  --no-dev \
-  --optimize-autoloader \
-  --no-interaction \
-  --no-progress \
-  --prefer-dist
-
+COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
 php artisan key:generate --force
 
 php artisan p:environment:setup \
@@ -250,7 +210,7 @@ EOF
 ln -sf /etc/nginx/sites-available/pterodactyl.conf \
 /etc/nginx/sites-enabled/pterodactyl.conf
 
-systemctl restart nginx php8.3-fpm redis-server
+systemctl restart nginx php8.3-fpm
 
 # ---------------------------------------------------------
 # DONE
