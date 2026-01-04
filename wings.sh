@@ -73,12 +73,13 @@ check_success "SSL certificates generated" "SSL generation failed"
 # 6. Get User Configuration
 echo "-------------------------------------------------------"
 echo "Please enter the configuration details from your Panel:"
-read -p "Node UUID: " UUID
-read -p "Token ID: " TOKEN_ID
-read -p "Token: " TOKEN
-read -p "Remote URL (e.g., https://panel.example.com): " REMOTE
 echo "-------------------------------------------------------"
+read -p "Node UUID: " UUID < /dev/tty
+read -p "Token ID: " TOKEN_ID < /dev/tty
+read -p "Token: " TOKEN < /dev/tty
+read -p "Remote URL (e.g., https://panel.example.com): " REMOTE < /dev/tty
 
+echo "-------------------------------------------------------"
 # 7. Write Config File
 print_status "Writing wings configuration..."
 cat <<CFG > /etc/pterodactyl/config.yml
