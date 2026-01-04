@@ -12,8 +12,9 @@ check_success() { if [ $? -eq 0 ]; then echo -e "\e[32m[SUCCESS]\e[0m $1"; else 
 
 # 1. Install Docker
 print_status "Installing Docker..."
-curl -sSL https://get.docker.com/ | CHANNEL=stable bash
-systemctl enable --now docker
+# Redirecting all output to /dev/null to keep it clean
+curl -sSL https://get.docker.com/ | CHANNEL=stable bash > /dev/null 2>&1
+systemctl enable --now docker > /dev/null 2>&1
 check_success "Docker installed and started" "Docker installation failed"
 
 # 2. Update GRUB (Swap Support)
@@ -29,7 +30,7 @@ fi
 print_status "Downloading Wings binary..."
 mkdir -p /etc/pterodactyl
 ARCH=$([[ "$(uname -m)" == "x86_64" ]] && echo "amd64" || echo "arm64")
-curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_$ARCH"
+curl -L -s -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_$ARCH"
 chmod u+x /usr/local/bin/wings
 check_success "Wings binary downloaded" "Failed to download Wings"
 
@@ -57,8 +58,8 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable wings
+systemctl daemon-reload > /dev/null 2>&1
+systemctl enable wings > /dev/null 2>&1
 check_success "Systemd service configured" "Failed to reload daemon"
 
 # 5. Generate SSL Certificates
@@ -67,19 +68,19 @@ mkdir -p /etc/certs/wings
 openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
     -subj "/C=NA/ST=NA/L=NA/O=NA/CN=Generic SSL Certificate" \
     -keyout /etc/certs/wings/privkey.pem \
-    -out /etc/certs/wings/fullchain.pem
+    -out /etc/certs/wings/fullchain.pem > /dev/null 2>&1
 check_success "SSL certificates generated" "SSL generation failed"
 
 # 6. Get User Configuration
+# We use < /dev/tty so the script can read your typing while being piped from curl
 echo "-------------------------------------------------------"
 echo "Please enter the configuration details from your Panel:"
-echo "-------------------------------------------------------"
 read -p "Node UUID: " UUID < /dev/tty
 read -p "Token ID: " TOKEN_ID < /dev/tty
 read -p "Token: " TOKEN < /dev/tty
 read -p "Remote URL (e.g., https://panel.example.com): " REMOTE < /dev/tty
-
 echo "-------------------------------------------------------"
+
 # 7. Write Config File
 print_status "Writing wings configuration..."
 cat <<CFG > /etc/pterodactyl/config.yml
@@ -105,5 +106,5 @@ CFG
 
 # 8. Start Wings
 print_status "Starting Wings..."
-systemctl start wings
-check_success "Wings is now running!" "Wings failed to start. Check logs with: journalctl -u wings"
+systemctl start wings > /dev/null 2>&1
+check_success "Wings is now running!" "Wings failed to start."
