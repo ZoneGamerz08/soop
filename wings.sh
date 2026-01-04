@@ -1,74 +1,41 @@
 #!/bin/bash
-set -e
 
-# ------------------------
-# Root Check
-# ------------------------
-if [ "$EUID" -ne 0 ]; then
-    echo "[ERROR] This script must be run as root"
-    exit 1
+# Ensure script is run as root
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root"
+   exit 1
 fi
 
-print_status() {
-    echo -e "\n[INFO] $1"
-}
+# Helper functions for status reporting
+print_status() { echo -e "\e[34m[INFO]\e[0m $1"; }
+check_success() { if [ $? -eq 0 ]; then echo -e "\e[32m[SUCCESS]\e[0m $1"; else echo -e "\e[31m[ERROR]\e[0m $2"; exit 1; fi }
 
-check_success() {
-    if [ $? -eq 0 ]; then
-        echo "[OK] $1"
-    else
-        echo "[ERROR] $2"
-        exit 1
-    fi
-}
-
-# ------------------------
 # 1. Install Docker
-# ------------------------
-print_status "Installing Docker"
+print_status "Installing Docker..."
 curl -sSL https://get.docker.com/ | CHANNEL=stable bash
-check_success "Docker installed" "Docker installation failed"
-
 systemctl enable --now docker
-check_success "Docker service enabled" "Failed to enable Docker"
+check_success "Docker installed and started" "Docker installation failed"
 
-# ------------------------
 # 2. Update GRUB (Swap Support)
-# ------------------------
 GRUB_FILE="/etc/default/grub"
 if [ -f "$GRUB_FILE" ] && ! grep -q "swapaccount=1" "$GRUB_FILE"; then
-    print_status "Enabling Docker swap accounting"
+    print_status "Enabling Docker swap accounting in GRUB..."
     sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/&swapaccount=1 /' $GRUB_FILE
     update-grub > /dev/null 2>&1
-    check_success "GRUB updated (Reboot required)" "Failed to update GRUB"
+    print_status "GRUB updated. NOTE: A reboot is required for swap limits to take effect."
 fi
 
-# ------------------------
-# 3. Install Wings
-# ------------------------
-print_status "Installing Pterodactyl Wings"
-
+# 3. Download Wings Binary
+print_status "Downloading Wings binary..."
 mkdir -p /etc/pterodactyl
+ARCH=$([[ "$(uname -m)" == "x86_64" ]] && echo "amd64" || echo "arm64")
+curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_$ARCH"
+chmod u+x /usr/local/bin/wings
+check_success "Wings binary downloaded" "Failed to download Wings"
 
-ARCH="$(uname -m)"
-if [[ "$ARCH" == "x86_64" ]]; then
-    BIN_ARCH="amd64"
-else
-    BIN_ARCH="arm64"
-fi
-
-curl -L -o /usr/local/bin/wings \
-"https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_${BIN_ARCH}"
-check_success "Wings downloaded" "Failed to download Wings"
-
-chmod +x /usr/local/bin/wings
-
-# ------------------------
-# 4. Create systemd Service
-# ------------------------
-print_status "Creating wings.service"
-
-cat <<SERVICE > /etc/systemd/system/wings.service
+# 4. Create Systemd Service
+print_status "Creating Wings systemd service..."
+cat <<EOF > /etc/systemd/system/wings.service
 [Unit]
 Description=Pterodactyl Wings Daemon
 After=docker.service
@@ -88,40 +55,32 @@ RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
-SERVICE
+EOF
 
 systemctl daemon-reload
 systemctl enable wings
-check_success "Wings service registered" "Failed to enable Wings"
+check_success "Systemd service configured" "Failed to reload daemon"
 
-# ------------------------
 # 5. Generate SSL Certificates
-# ------------------------
-print_status "Generating SSL certificates"
-
+print_status "Generating self-signed SSL certificates..."
 mkdir -p /etc/certs/wings
-cd /etc/certs/wings
-
 openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
--subj "/C=NA/ST=NA/L=NA/O=NA/CN=Generic SSL Certificate" \
--keyout privkey.pem -out fullchain.pem
-
+    -subj "/C=NA/ST=NA/L=NA/O=NA/CN=Generic SSL Certificate" \
+    -keyout /etc/certs/wings/privkey.pem \
+    -out /etc/certs/wings/fullchain.pem
 check_success "SSL certificates generated" "SSL generation failed"
 
-# ------------------------
-# 6. Collect Wings Credentials
-# ------------------------
-echo
-read -p "Enter Wings UUID: " UUID
-read -p "Enter Token ID: " TOKEN_ID
-read -p "Enter Token: " TOKEN
-read -p "Enter Remote URL (Panel URL): " REMOTE
+# 6. Get User Configuration
+echo "-------------------------------------------------------"
+echo "Please enter the configuration details from your Panel:"
+read -p "Node UUID: " UUID
+read -p "Token ID: " TOKEN_ID
+read -p "Token: " TOKEN
+read -p "Remote URL (e.g., https://panel.example.com): " REMOTE
+echo "-------------------------------------------------------"
 
-# ------------------------
-# 7. Create Wings Config
-# ------------------------
-print_status "Creating Wings configuration"
-
+# 7. Write Config File
+print_status "Writing wings configuration..."
 cat <<CFG > /etc/pterodactyl/config.yml
 debug: false
 uuid: ${UUID}
@@ -143,15 +102,7 @@ allowed_mounts: []
 remote: '${REMOTE}'
 CFG
 
-check_success "Wings config created" "Failed to write config"
-
-# ------------------------
 # 8. Start Wings
-# ------------------------
-print_status "Starting Wings"
+print_status "Starting Wings..."
 systemctl start wings
-check_success "Wings started successfully" "Wings failed to start"
-
-echo
-echo "✅ Pterodactyl Wings installation complete"
-echo "⚠️ Reboot required if GRUB was modified"
+check_success "Wings is now running!" "Wings failed to start. Check logs with: journalctl -u wings"
