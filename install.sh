@@ -29,7 +29,6 @@ get_credentials() {
         echo
         read -rsp "Confirm Admin Password: " ADMIN_PASS_CONFIRM </dev/tty
         echo
-
         if [[ -n "$ADMIN_PASS" && "$ADMIN_PASS" == "$ADMIN_PASS_CONFIRM" ]]; then
             break
         else
@@ -42,7 +41,6 @@ get_credentials() {
         echo
         read -rsp "Confirm Database Password: " DB_PASSWORD_CONFIRM </dev/tty
         echo
-
         if [[ -n "$DB_PASSWORD" && "$DB_PASSWORD" == "$DB_PASSWORD_CONFIRM" ]]; then
             break
         else
@@ -60,39 +58,51 @@ get_credentials() {
 get_credentials
 
 # ---------------------------------------------------------
-# 2. OS DETECTION & REPOS
+# 2. OS DETECTION & REPOS (MAX SPEED)
 # ---------------------------------------------------------
 source /etc/os-release
 OS=$ID
 VERSION=$VERSION_ID
+CODENAME=$(lsb_release -sc)
 
-echo "[INFO] Detected $OS $VERSION"
+echo "[INFO] Detected $OS $VERSION ($CODENAME)"
 
-apt update -y
-DEBIAN_FRONTEND=noninteractive apt install -y \
-  curl ca-certificates gnupg lsb-release apt-transport-https sudo
+export DEBIAN_FRONTEND=noninteractive
+APT_OPTS="-o APT::Install-Recommends=0 -o APT::Install-Suggests=0"
+
+# Base tooling (no update yet)
+apt-get install -y $APT_OPTS \
+  ca-certificates curl gnupg lsb-release apt-transport-https sudo
 
 # PHP (Sury)
-echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
-  > /etc/apt/sources.list.d/sury-php.list
 curl -fsSL https://packages.sury.org/php/apt.gpg \
   | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
 
-# MariaDB
-curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
+echo "deb https://packages.sury.org/php/ $CODENAME main" \
+  > /etc/apt/sources.list.d/sury-php.list
 
 # Redis
 curl -fsSL https://packages.redis.io/gpg \
   | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] \
-https://packages.redis.io/deb $(lsb_release -cs) main" \
+https://packages.redis.io/deb $CODENAME main" \
   > /etc/apt/sources.list.d/redis.list
+
+# MariaDB (manual, no setup script)
+curl -fsSL https://mariadb.org/mariadb_release_signing_key.asc \
+  | gpg --dearmor -o /etc/apt/trusted.gpg.d/mariadb.gpg
+
+echo "deb https://mirror.mariadb.org/repo/11.4/debian $CODENAME main" \
+  > /etc/apt/sources.list.d/mariadb.list
+
+# Single metadata refresh
+apt-get update -y
 
 # ---------------------------------------------------------
 # 3. INSTALL DEPENDENCIES
 # ---------------------------------------------------------
-apt update -y
-DEBIAN_FRONTEND=noninteractive apt install -y \
+apt-get install -y $APT_OPTS \
   php8.3 php8.3-{cli,common,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} \
   mariadb-server nginx redis-server git tar unzip
 
@@ -122,7 +132,7 @@ FLUSH PRIVILEGES;
 EOF
 
 # ---------------------------------------------------------
-# 6. PANEL CONFIG
+# 6. PANEL CONFIGURATION
 # ---------------------------------------------------------
 cp .env.example .env
 
@@ -164,8 +174,8 @@ chown -R www-data:www-data /var/www/pterodactyl
 # ---------------------------------------------------------
 # 7. CRON & QUEUE
 # ---------------------------------------------------------
-echo "* * * * * www-data php /var/www/pterodactyl/artisan schedule:run \
->> /dev/null 2>&1" > /etc/cron.d/pterodactyl
+echo "* * * * * www-data php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1" \
+  > /etc/cron.d/pterodactyl
 
 cat > /etc/systemd/system/pteroq.service <<EOF
 [Unit]
@@ -188,7 +198,7 @@ systemctl daemon-reload
 systemctl enable --now redis-server pteroq.service
 
 # ---------------------------------------------------------
-# 8. NGINX + SSL (SELF-SIGNED)
+# 8. NGINX + SSL
 # ---------------------------------------------------------
 mkdir -p /etc/certs
 
