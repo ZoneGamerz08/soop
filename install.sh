@@ -1,9 +1,7 @@
 #!/bin/bash
 set -e
 
-# ---------------------------------------------------------
-# 1. INTERACTIVE CREDENTIALS (curl | bash SAFE)
-# ---------------------------------------------------------
+# 1. INTERACTIVE CREDENTIALS 
 echo "Pterodactyl Panel Installation Setup"
 echo "======================================"
 
@@ -20,36 +18,53 @@ echo
 echo "✅ Credentials saved. Starting installation..."
 echo
 
-# ---------------------------------------------------------
 # ROOT CHECK
-# ---------------------------------------------------------
 if [ "$EUID" -ne 0 ]; then
   echo "❌ Please run as root"
   exit 1
 fi
 
-# ---------------------------------------------------------
 # 2. OS DETECTION & REPOS
-# ---------------------------------------------------------
 source /etc/os-release
 OS=$ID
-VERSION=$VERSION_ID
+VERSION_ID=$VERSION_ID
 
-if [[ "$OS" == "debian" ]]; then
-    apt update -y
-    DEBIAN_FRONTEND=noninteractive apt install -y \
-        curl ca-certificates gnupg sudo lsb-release apt-transport-https
+echo "🔄 Configuring repositories for $OS $VERSION_ID..."
 
-    # PHP (Sury)
-    curl -fsSL https://packages.sury.org/php/apt.gpg \
-        | gpg --dearmor -o /etc/apt/trusted.gpg.d/sury.gpg
-    echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" \
-        > /etc/apt/sources.list.d/sury-php.list
+if [[ "$OS" == "ubuntu" ]]; then
+    # Ubuntu specific packages and PHP PPA
+    apt update -y > /dev/null 2>&1
+    apt -y install software-properties-common curl apt-transport-https ca-certificates gnupg > /dev/null 2>&1
+    
+    # Add PHP PPA
+    LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
 
-    # MariaDB
-    curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | bash
+    # Add Redis
+    curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg > /dev/null 2>&1
+    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list > /dev/null 2>&1
+
+elif [[ "$OS" == "debian" ]]; then
+    # Debian specific packages
+    apt update -y > /dev/null 2>&1
+    apt install -y curl ca-certificates gnupg2 sudo lsb-release > /dev/null 2>&1
+
+    # PHP Sury Repository
+    echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/sury-php.list > /dev/null 2>&1
+    curl -fsSL https://packages.sury.org/php/apt.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/sury-keyring.gpg > /dev/null 2>&1
+
+    # Version specific logic for Debian 11 and 12
+    if [[ "$VERSION_ID" == "11" || "$VERSION_ID" == "12" ]]; then
+        # MariaDB repo setup script
+        curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup | sudo bash > /dev/null 2>&1
+        
+        # Redis official APT repository
+        curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg > /dev/null 2>&1
+        echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list > /dev/null 2>&1
+    fi
+else
+    echo "❌ Unsupported Operating System: $OS"
+    exit 1
 fi
-
 # Redis
 curl -fsSL https://packages.redis.io/gpg \
     | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
